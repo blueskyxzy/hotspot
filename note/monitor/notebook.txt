@@ -1,0 +1,192 @@
+
+objectMonitor.cpp
+objectMonitor.hpp
+
+构造初始化
+ObjectMonitor() {
+    _header       = NULL;
+    _count        = 0;
+    _waiters      = 0,
+    _recursions   = 0;
+    _object       = NULL;
+    _owner        = NULL;
+    _WaitSet      = NULL;
+    _WaitSetLock  = 0 ;
+    _Responsible  = NULL ;
+    _succ         = NULL ;
+    _cxq          = NULL ;
+    FreeNext      = NULL ;
+    _EntryList    = NULL ;
+    _SpinFreq     = 0 ;
+    _SpinClock    = 0 ;
+    OwnerIsThread = 0 ;
+    _previous_owner_tid = 0;
+  }
+
+_owner      当前获取锁的线程
+_WaitSet    等待队列
+_cxq
+_EntryList  同步队列
+
+ObjectMonitor::Enter
+    cur = Atomic::cmpxchg_ptr (Self, &_owner, NULL) ;
+    _owner设为当前线程
+    if (Self->is_lock_owned ((address)cur)) {
+    }
+
+ObjectMonitor::Exit
+
+
+参考资料：
+https://blog.csdn.net/wuzhiwei549/article/details/79929183
+http://www.cnblogs.com/dennyzhangdd/p/6734638.html
+
+cas操作！！！
+    为了提高性能，JVM很多操作都依赖CAS实现，一种乐观锁的实现
+    CAS：Compare and Swap
+    JNI来完成CPU指令的操作：
+    unsafe.compareAndSwapInt(this, valueOffset, expect, update);
+    CAS有3个操作数，内存值V，旧的预期值A，要修改的新值B。如果A=V，那么把B赋值给V，返回V；如果A！=V，直接返回V。
+    打开源码：openjdk\hotspot\src\oscpu\windowsx86\vm\ atomicwindowsx86.inline.hpp
+
+对象头！！！
+    HotSpot虚拟机中，对象在内存中存储的布局可以分为三块区域：对象头（Header）、实例数据（Instance Data）和对齐填充（Padding）。
+    HotSpot虚拟机的对象头(Object Header)包括两部分信息:
+
+    第一部分"Mark Word":用于存储对象自身的运行时数据， 如哈希码（HashCode）、GC分代年龄、锁状态标志、线程持有的锁、偏向线程ID、偏向时间戳等等.
+
+    第二部分"Klass Pointer"：对象指向它的类的元数据的指针，虚拟机通过这个指针来确定这个对象是哪个类的实例。
+    (数组，对象头中还必须有一块用于记录数组长度的数据，因为虚拟机可以通过普通Java对象的元数据信息确定Java对象的大小，但是从数组的元数据中无法确定数组的大小。 )
+    对象头源码位置：openJDK--》hotspot源码markOop.hpp，虚拟机对象头存储结构
+
+    也就是对象头有锁标志位，锁标志位定义锁类型，如下的枚举
+    有源码中对锁标志位这样枚举
+    enum {   locked_value             = 0,//00 轻量级锁
+              unlocked_value           = 1,//01 无锁
+              monitor_value            = 2,//10 监视器锁，也叫膨胀锁，也叫重量级锁
+              marked_value             = 3,//11 GC标记
+              biased_lock_pattern      = 5 //101 偏向锁
+       };
+
+重量级锁（偏向锁，轻量级锁，重量级锁，自旋锁）
+
+
+synchronized被称为重量级的锁，它的同步包括：
+
+    对于普通方法同步，锁是当前实例对象
+    对于静态方法同步，锁是当前类的 Class 对象
+    对于方法块同步，锁是 Synchronized 括号里的对象
+
+    syncrhoized又叫做内置锁
+
+    现在我们知道为什么用syncrhoized(lock)来加锁时，锁对象可以是任意对象了：
+    1：syncrhoized(lock)加锁时，用到的其实只是lock对象内置的monitor而已；
+    2：一个对象的monitor是唯一的，相当于一个唯一的许可证。拿到许可证的线程才可以执行，执行完后释放对象的monitor才可以被其他线程获取。
+
+    现在假设有代码块：  syncrhoized（Object lock）{
+    同步代码...;
+    }
+
+    它在字节码文件中被编译为：monitorenter;//获取monitor许可证，进入同步块
+    同步代码...
+    monitorexit;//离开同步块后，释放monitor许可证
+
+锁就是对象
+对象头)这个头包括两个部分，第一部分用于存储自身运行时的数据例如GC标志位、哈希码、锁状态 等信息。
+第二部分存放指向方法区类静态数据的指针。
+锁状态就是用来同步操作的 bit 位。因为锁信息是存储在对象上的，所以就不难理解 锁是对象 这句话了
+
+monitor Object 设计模式
+在任一时间内，只有唯一的公共的成员方法，被唯一的线程所执行。
+对于对象的调用者来说，如果总是需要在调用方法之前进行拿锁，而在调用方法之后进行放锁，这将会使并发应用编程变得更加困难。
+如果一个对象的方法执行过程中，由于某些条件不能满足而阻塞，应该允许其它的客户端线程的方法调用可以访问该对象。
+
+结构
+在 Monitor Object 模式中，主要有四种类型的参与者：
+监视者对象 (Monitor Object): 负责定义公共的接口方法，这些公共的接口方法会在多线程的环境下被调用执行。
+同步方法：这些方法是监视者对象所定义。为了防止竞争条件，无论是否同时有多个线程并发调用同步方法，还是监视者对象含有多个同步方法，在任一时间内只有监视者对象的一个同步方法能够被执行。
+监视锁 (Monitor Lock): 每一个监视者对象都会拥有一把监视锁。
+监视条件 (Monitor Condition): 同步方法使用监视锁和监视条件来决定方法是否需要阻塞或重新执行
+
+1、同步方法的调用和串行化。当客户线程调用监视者对象的同步方法时，必须首先获取它的监视锁。只要该监视者对象有其他同步方法正在被执行，获取操作便不会成功。
+在这种情况下，客户线程将被阻塞直到它获取监视锁。当客户线程成功获取监视锁后，进入临界区，执行方法实现的服务。一旦同步方法完成执行，监视锁会被自动释放，目的是使其他客户线程有机会调用执行该监视者对象的同步方法。
+2、同步方法线程挂起。如果调用同步方法的客户线程必须被阻塞或是有其他原因不能立刻进行，它能够在一个监视条件上等待，这将导致该客户线程暂时释放监视锁，并被挂起在监视条件上。
+3、监视条件通知。一个客户线程能够通知一个监视条件，目的是为了让一个前期使自己挂起在一个监视条件上的同步方法线程恢复运行。
+4、同步方法线程恢复。一旦一个早先被挂起在监视条件上的同步方法线程获取通知，它将继续在最初的等待监视条件的点上执行。在被通知线程被允许恢复执行同步方法之前，监视锁将自动被获取。图中描述了监视者对象的动态特性。
+
+其实， monitor object 设计模式执行时序图中的红线部分 Monitor Object、Monitor Lock、Monitor Condition 三者就是 Java Object！！ Java 将该模式内置到语言层面，对象加 Synchronized 关键字，
+就能确保任何对它的方法请求的同步被透明的进行，而不需要调用者的介入。
+这也就是为什么 Java 所有对象的基类 Object 中会有 wait()、notify()、notifyAll() 方法了
+
+Monitor(java多线程同步机制)
+为了达到同步，java在一个监控器(Monitor)的基础上实现了一个巧妙的方案。
+监控器是一个控制机制，可以认为是一个很小的、只能容纳一个线程的盒子。
+一旦一个线程进入监控器，其它的线程必须等待，直到那个线程退出监控为止。
+通过这种方式，一个监控器可以保证共享资源在同一时刻只可被一个线程使用，这种方式称为同步。
+一旦一个线程进入一个实例的任何同步方法，别的线程将不能进入该同一实例的其它同步方法，但是该实例的非同步方法仍然能够被调用。
+
+java中锁synchronized性能较差，线程会阻塞。本节将以图文形式来描述JVM的synchronized锁优化。
+    在jdk1.6中对锁的实现引入了大量的优化来减少锁操作的开销：
+    锁粗化（Lock Coarsening）：将多个连续的锁扩展成一个范围更大的锁，用以减少频繁互斥同步导致的性能损耗。
+    锁消除（Lock Elimination）：JVM及时编译器在运行时，通过逃逸分析，如果判断一段代码中，堆上的所有数据不会逃逸出去从来被其他线程访问到，就可以去除这些锁。
+    轻量级锁（Lightweight Locking）：JDK1.6引入。在没有多线程竞争的情况下避免重量级互斥锁，只需要依靠一条CAS原子指令就可以完成锁的获取及释放。
+    偏向锁（Biased Locking）：JDK1.6引入。目的是消除数据再无竞争情况下的同步原语。使用CAS记录获取它的线程。下一次同一个线程进入则偏向该线程，无需任何同步操作。
+    适应性自旋（Adaptive Spinning）：为了避免线程频繁挂起、恢复的状态切换消耗。产生了忙循环（循环时间固定），即自旋。JDK1.6引入了自适应自旋。自旋时间根据之前锁自旋时间和线程状态，动态变化，用以期望能减少阻塞的时间。
+     锁升级：偏向锁--》轻量级锁--》重量级锁
+
+
+JVM中synchronized锁实现原理（优化）
+    偏向锁
+    按照之前的HotSpot设计，每次加锁/解锁都会涉及到一些CAS操作（比如对等待队列的CAS操作），CAS操作会延迟本地调用，因此偏向锁的想法是一旦线程第一次获得了监视对象，之后让监视对象“偏向”这个线程，之后的多次调用则可以避免CAS操作。
+    　　简单的讲，就是在锁对象的对象头（开篇讲的对象头数据存储结构）中有个ThreaddId字段，这个字段如果是空的，第一次获取锁的时候，就将自身的ThreadId写入到锁的ThreadId字段内，将锁头内的是否偏向锁的状态位置1.这样下次获取锁的时候，直接检查ThreadId是否和自身线程Id一致，如果一致，则认为当前线程已经获取了锁，因此不需再次获取锁，略过了轻量级锁和重量级锁的加锁阶段。提高了效率。
+    注意：当锁有竞争关系的时候，需要解除偏向锁，进入轻量级锁。
+    每一个线程在准备获取共享资源时：
+    第一步，检查MarkWord里面是不是放的自己的ThreadId ,如果是，表示当前线程是处于 “偏向锁”.跳过轻量级锁直接执行同步体。
+
+    轻量级锁和重量级锁
+    第二步，如果MarkWord不是自己的ThreadId,锁升级，这时候，用CAS来执行切换，新的线程根据MarkWord里面现有的ThreadId，通知之前线程暂停，之前线程将Markword的内容置为空。
+    第三步，两个线程都把对象的HashCode复制到自己新建的用于存储锁的记录空间，接着开始通过CAS操作，把共享对象的MarKword的内容修改为自己新建的记录空间的地址的方式竞争MarkWord.
+    第四步，第三步中成功执行CAS的获得资源，失败的则进入自旋.
+    第五步，自旋的线程在自旋过程中，成功获得资源(即之前获的资源的线程执行完成并释放了共享资源)，则整个状态依然处于轻量级锁的状态，如果自旋失败 第六步，进入重量级锁的状态，这个时候，自旋的线程进行阻塞，等待之前线程执行完成并唤醒自己.
+    注意点：JVM加锁流程
+
+    偏向锁--》轻量级锁--》重量级锁
+
+    从左往右可以升级，从右往左不能降级
+
+
+从C++源码看synchronized（太多了，看C++源码分析）
+    cas操作源码位置：openjdk\hotspot\src\oscpu\windowsx86\vm\ atomicwindowsx86.inline.hpp
+    对象头源码位置：openJDK--》hotspot源码markOop.hpp
+    objectMonitor.hpp
+    objectMonitor.cpp
+    class oopDesc
+    markOopDesc类
+    InterpreterRuntime.cpp
+    BasicObjectLock类
+    basicLock.hpp中BasicLock
+    偏向锁的入口位于openjdk\hotspot\src\share\vm\runtime\synchronizer.cpp文件的ObjectSynchronizer::fast_enter函数：
+    偏向锁的获取由BiasedLocking::revoke_and_rebias方法实现
+    偏向锁的撤销由BiasedLocking::revoke_at_safepoint方法实现：
+    轻量级锁，其入口位于ObjectSynchronizer::slow_enter
+    轻量级锁的释放通过ObjectSynchronizer::slow_exit--->调用ObjectSynchronizer::fast_exit完成。
+    重量级锁通过对象内部的监视器（monitor）实现，其中monitor的本质是依赖于底层操作系统的Mutex Lock实现，操作系统实现线程之间的切换需要从用户态到内核态的切换，切换成本非常高。
+    锁的膨胀过程通过ObjectSynchronizer::inflate函数实现
+    当锁膨胀完成并返回对应的monitor时，并不表示该线程竞争到了锁，真正的锁竞争发生在ObjectMonitor::enter方法中。
+    monitor竞争失败的线程，通过自旋执行ObjectMonitor::EnterI方法等待锁的释放，EnterI方法的部分逻辑实现
+    当该线程被唤醒时，会从挂起的点继续执行，通过ObjectMonitor::TryLock尝试获取锁
+    当某个持有锁的线程执行完同步代码块时，会进行锁的释放，给其它线程机会执行同步代码，在HotSpot中，通过退出monitor的方式实现锁的释放，并通知被阻塞的线程，具体实现位于ObjectMonitor::exit方法中
+    如果是重量级锁的释放，monitor中的_owner指向当前线程，即THREAD == _owner；
+    根据不同的策略（由QMode指定），从cxq或EntryList中获取头节点，通过ObjectMonitor::ExitEpilog方法唤醒该节点封装的线程，唤醒操作最终由unpark完成
+    被唤醒的线程，继续执行monitor的竞争
+
+
+了解了Synchronized原理以及JVM对Synchronized的优化。简单来说解决三种场景
+1）只有一个线程进入临界区，偏向锁
+2）多个线程交替进入临界区，轻量级锁
+3）多线程同时进入临界区，重量级锁
+
+总结：
+synchronized代码块通过javap生成的字节码中包含 ** monitorenter ** 和 ** monitorexit **指令。
+monitorenter指令获取对象的monitor互斥锁
+monitorexit指令释放互斥锁
