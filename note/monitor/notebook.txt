@@ -187,6 +187,22 @@ JVM中synchronized锁实现原理（优化）
 3）多线程同时进入临界区，重量级锁
 
 总结：
-synchronized代码块通过javap生成的字节码中包含 ** monitorenter ** 和 ** monitorexit **指令。
+1.synchronized代码块通过javap生成的字节码中包含 ** monitorenter ** 和 ** monitorexit **指令。
 monitorenter指令获取对象的monitor互斥锁
 monitorexit指令释放互斥锁
+2.oopDesc--继承-->markOopDesc--方法monitor()-->ObjectMonitor-->enter、exit 获取、释放锁
+每个线程都有两个ObjectMonitor对象列表，分别为free和used列表，如果当前free列表为空，线程将向全局global list请求分配ObjectMonitor。
+ObjectMonitor对象中有两个队列：_WaitSet 和 _EntryList，用来保存ObjectWaiter对象列表
+3.解释器执行monitorenter时会进入到InterpreterRuntime.cpp的InterpreterRuntime::monitorenter函数。根据入参线程和基础对象锁信息（包含一个BasicLock和一个指向Object对象的指针）后，
+然后虚拟机是否开启偏向锁功能，调用ObjectSynchronizer::fast_enter获取偏向锁，具体是BiasedLocking::revoke_and_rebias方法实现，就是根据对象头的Mark Word判断是否是偏向锁状态，
+根据当前线程ID，如果执行CAS，CAS失败表示当前存在多个线程竞争锁，转成轻量级锁
+假设线程A和B同时执行到临界区if (mark->is_neutral())：
+原子操作保证只有一个线程可以把指向栈帧的指针复制到Mark Word
+线程B执行失败，退出临界区，通过ObjectSynchronizer::inflate方法开始膨胀锁
+重量级锁通过对象内部的监视器（monitor）实现，其中monitor的本质是依赖于底层操作系统的Mutex Lock实现，操作系统实现线程之间的切换需要从用户态到内核态的切换，切换成本非常高。
+当锁膨胀完成并返回对应的monitor时，并不表示该线程竞争到了锁，真正的锁竞争发生在ObjectMonitor::enter方法中
+4.真正的锁竞争发生在ObjectMonitor::enter方法
+通过CAS尝试把monitor的_owner字段设置为当前线程；
+如果设置之前的_owner指向当前线程，说明当前线程再次进入monitor，即重入锁，执行_recursions ++ ，记录重入的次数；
+如果之前的_owner指向的地址在当前线程中，这种描述有点拗口，换一种说法：之前_owner指向的BasicLock在当前线程栈上，说明当前线程是第一次进入该monitor，设置_recursions为1，_owner为当前线程，该线程成功获得锁并返回；
+如果获取锁失败，则等待锁的释放；
