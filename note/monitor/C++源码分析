@@ -676,6 +676,32 @@ void ATTR ObjectMonitor::enter(TRAPS) {
 
 monitor等待
 monitor竞争失败的线程，通过自旋执行ObjectMonitor::EnterI方法等待锁的释放，EnterI方法的部分逻辑实现如下：
+
+这是enter里的自旋
+for (;;) {
+      jt->set_suspend_equivalent();
+      // cleared by handle_special_suspend_equivalent_condition()
+      // or java_suspend_self()
+
+      EnterI (THREAD) ;
+
+      if (!ExitSuspendEquivalent(jt)) break ;
+
+      //
+      // We have acquired the contended monitor, but while we were
+      // waiting another thread suspended us. We don't want to enter
+      // the monitor while suspended because that would surprise the
+      // thread that suspended us.
+      //
+          _recursions = 0 ;
+      _succ = NULL ;
+      exit (false, Self) ;
+
+      jt->java_suspend_self();
+    }
+
+
+这是EnterI方法的部分逻辑
 ObjectWaiter node(Self) ;
     Self->_ParkEvent->reset() ;
     node._prev   = (ObjectWaiter *) 0xBAD ;
